@@ -61,10 +61,10 @@ Packet = subclass Object, {
     else
       ntoh16 @skb\getuint16 @off+offset
 
-  long: (offset) =>
+  word: (offset) =>
     if log.level == 7
       ok, ret = pcall @skb.getuint32, @skb, @off+offset
-      ntoh32(ret) if ok else log.error @__name, "long", ret, "#{@off} #{offset} #{#@skb}"
+      ntoh32(ret) if ok else log.error @__name, "word", ret, "#{@off} #{offset} #{#@skb}"
     else
       ntoh32 @skb\getuint32 @off+offset
 
@@ -220,9 +220,9 @@ TCP = subclass Packet, {
 
   _get_dport: => @short 2
 
-  _get_sequence_number: => @long 4
+  _get_sequence_number: => @word 4
 
-  _get_acknowledgment_number: => @long 8
+  _get_acknowledgment_number: => @word 8
 
   _get_data_off: => 4 * @nibble 12
 

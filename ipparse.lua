@@ -104,13 +104,13 @@ local Packet = subclass(Object, {
       return ntoh16(self.skb:getuint16(self.off + offset))
     end
   end,
-  long = function(self, offset)
+  word = function(self, offset)
     if log.level == 7 then
       local ok, ret = pcall(self.skb.getuint32, self.skb, self.off + offset)
       if ok then
         return ntoh32(ret)
       else
-        return log.error(self.__name, "long", ret, tostring(self.off) .. " " .. tostring(offset) .. " " .. tostring(#self.skb))
+        return log.error(self.__name, "word", ret, tostring(self.off) .. " " .. tostring(offset) .. " " .. tostring(#self.skb))
       end
     else
       return ntoh32(self.skb:getuint32(self.off + offset))
@@ -353,10 +353,10 @@ local TCP = subclass(Packet, {
     return self:short(2)
   end,
   _get_sequence_number = function(self)
-    return self:long(4)
+    return self:word(4)
   end,
   _get_acknowledgment_number = function(self)
-    return self:long(8)
+    return self:word(8)
   end,
   _get_data_off = function(self)
     return 4 * self:nibble(12)
