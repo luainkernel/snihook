@@ -6,9 +6,9 @@ levels[levels[i]] = i-1 for i = 1, #levels
 
 @ = {}
 
-@set_log = (queue, lvl, @msg="") ->
+@set_log = (queue, evt, lvl, @msg="") ->
   @level = tonumber(lvl) or levels[lvl]
-  @log = outbox queue
+  @log = outbox queue, evt
 
 logger = (lvl, txt=levels[lvl+1]) ->
   (...) ->

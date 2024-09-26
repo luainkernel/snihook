@@ -1,4 +1,5 @@
 return {
   activate = false,
-  log_level = "NOTICE"
+  log_level = "NOTICE",
+  mode = "bridge"
 }

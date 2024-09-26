@@ -16,13 +16,13 @@ for i = 1, #levels do
   levels[levels[i]] = i - 1
 end
 local self = { }
-self.set_log = function(queue, lvl, msg)
+self.set_log = function(queue, evt, lvl, msg)
   if msg == nil then
     msg = ""
   end
   self.msg = msg
   self.level = tonumber(lvl) or levels[lvl]
-  self.log = outbox(queue)
+  self.log = outbox(queue, evt)
 end
 local logger
 logger = function(lvl, txt)
