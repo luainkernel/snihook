@@ -6,35 +6,21 @@ This whitelist is populated by the mean of `/dev/sni_whitelist`.
 
 ## Installation
 
-Install [lunatik](https://github.com/luainkernel/lunatik):
-
-```sh
-git clone https://github.com/luainkernel/lunatik
-git remote add gsoc2024 https://github.com/sheharyaar/lunatik
-cd lunatik
-LUNATIK_DIR=$PWD
-git checkout netfilter-hook
-# dependencies (Debian / Ubuntu). `pahole` could need to be manually upgraded to higher version.
-sudo apt install lua5.4 pahole linux-source
-sudo cp /sys/kernel/btf/vmlinux /usr/lib/modules/`uname -r`/build/
-cd /tmp ; tar xaf /usr/src/linux-source-VERSION.tar.bz2  # replace VERSION by relevant value
-cd linux-source-VERSION/tools/bpf/resolve_btfids/        # idem
-sudo mkdir -p /usr/src/linux-headers-`uname -r`/tools/bpf/resolve_btfids/
-sudo cp resolve_btfids /usr/src/linux-headers-`uname -r`/tools/bpf/resolve_btfids/
-cd $LUNATIK_DIR
-make                             # builds modules
-sudo make install                # installs modules into /lib/modules/lua
-cd ..
-```
+Install [lunatik](https://github.com/luainkernel/lunatik).
 
 Install snihook:
 
 ```sh
 git clone https://github.com/jperon/lunatik_snihook
 cd lunatik_snihook
+sudo make install                                              # installs the extension to Xtables directory, and lua files to module directory
+```
+
+If one wants to make changes to the code:
+
+```sh
 sudo apt install luarocks && sudo luarocks install moonscript  # optional dependency (if one wants to make change to sources)
 make                                                           # generates Lua files from MoonScript sources
-sudo make install                                              # installs the extension to Xtables directory, and lua files to module directory
 ```
 
 ## Usage
