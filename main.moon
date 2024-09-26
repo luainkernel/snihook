@@ -17,30 +17,24 @@
 -- > echo del DOMAIN > /dev/sni_whitelist
 
 
-_runtimes = {
-  {"snihook/dev", true}      -- script that will handle /dev/sni_whitelist
-  {"snihook/hook", false}    -- script that will register nftable hook(s)
-}
-
-
-:runtime, :runtimes = require"rcu" and require"lunatik"
+rcu = require"rcu"
+:runtime = require"rcu" and require"lunatik"
 :run, :shouldstop = require"thread"
 :inbox = require"mailbox"
 :schedule, :time = require"linux"
 
 
 ->
-  dev_hook = inbox 100 * 1024
+  whitelist = rcu.table!
   log = inbox 100 * 1024
 
-  runtimes = runtimes!
-  for r in *_runtimes
-    {path, sleep} = r
-    assert not runtimes[path], "Please stop #{path} before launching this script."
-    rt = runtime path, sleep
-    run rt, path, dev_hook.queue, log.queue
-    r[3] = rt
-    runtimes[path] = rt
+  runtimes = {}
+  rt = runtime "snihook/dev", true
+  rt\resume whitelist, log.queue, log.event
+  runtimes[#runtimes+1] = rt
+  rt = runtime "snihook/hook", false
+  rt\resume whitelist, log.queue, log.event
+  runtimes[#runtimes+1] = rt
 
   previous = __mode: "kv"
   while not shouldstop!
@@ -54,6 +48,4 @@ _runtimes = {
     else
       schedule 1000
 
-  for {path, _, rt} in *_runtimes
-    rt\stop!
-    runtimes[path] = nil
+  rt\stop! for rt in *runtimes

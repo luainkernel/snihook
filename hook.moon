@@ -1,16 +1,21 @@
 :concat = table
 
 :inbox = require"mailbox"
-:register, family: {BRIDGE: pf}, bridge_hooks: {FORWARD: hooknum}, bridge_priority: {FILTER_BRIDGED: priority}, action: {:CONTINUE, :DROP} = require"netfilter"
-:activate, :log_level = require"snihook.config"
+:activate, :log_level, :mode = require"snihook.config"
+local register, pfs, hooknum, priority, CONTINUE, DROP
+switch mode
+  when "bridge"
+    :register, family: {:BRIDGE}, bridge_hooks: {FORWARD: hooknum}, bridge_priority: {FILTER_BRIDGED: priority}, action: {:CONTINUE, :DROP} = require"netfilter"
+    pfs = {BRIDGE}
+  when "router"
+    :register, family: {:IPV6, :IPV4}, inet_hooks: {FORWARD: hooknum}, ip_priority: {FILTER: priority}, action: {:CONTINUE, :DROP} = require"netfilter"
+    pfs = {IPV6, IPV4}
 DROP = activate and DROP or CONTINUE
 :set_log, :notice, :info, :dbg = require"snihook.log"
 :auto_ip, IP: {protocols: {TCP: tcp_proto}}, :Fragmented_IP4, :TCP, :TLS, :TLSHandshake, :TLSExtension = require"snihook.ipparse"
 :handshake = TLS.types
 :hello = TLSHandshake.types
 :server_name = TLSExtension.types
-
-whitelist = {}
 
 get_first = (fn) =>  -- Returns first value of an iterator that matches the condition defined in function fn.
   for v in @
@@ -22,18 +27,10 @@ fragmented_ips = setmetatable {},  __mode: "kv", __index: (id) =>
   @[id]
 
 
-(dev_queue, log_queue) ->
-  dev = inbox dev_queue
-  set_log log_queue, log_level, "snihook"
+(whitelist, log_queue, log_evt) ->
+  set_log log_queue, log_evt, log_level, "snihook"
 
-  register :pf, :hooknum, :priority, hook: =>
-    if changes = dev\receive!
-      for action, domain in changes\gmatch"(%S+)%s(%S+)"
-        if action == "add"
-          whitelist[domain] = true
-        elseif action == "del"
-          whitelist[domain] = nil
-
+  hook = =>
     ip = auto_ip @
     return CONTINUE if not ip or ip\is_empty!
     if ip\is_fragment!
@@ -67,3 +64,5 @@ fragmented_ips = setmetatable {},  __mode: "kv", __index: (id) =>
 
     CONTINUE
 
+
+  register :pf, :hooknum, :priority, :hook for pf in *pfs
