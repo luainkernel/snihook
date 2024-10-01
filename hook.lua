@@ -1,12 +1,12 @@
 local concat
 concat = table.concat
-local inbox
-inbox = require("mailbox").inbox
 local activate, log_level, mode
 do
   local _obj_0 = require("snihook.config")
   activate, log_level, mode = _obj_0.activate, _obj_0.log_level, _obj_0.mode
 end
+local outbox
+outbox = require("mailbox").outbox
 local register, pfs, hooknum, priority, CONTINUE, DROP
 local _exp_0 = mode
 if "bridge" == _exp_0 then
@@ -30,22 +30,16 @@ elseif "router" == _exp_0 then
   }
 end
 DROP = activate and DROP or CONTINUE
-local set_log, notice, info, dbg
-do
-  local _obj_0 = require("snihook.log")
-  set_log, notice, info, dbg = _obj_0.set_log, _obj_0.notice, _obj_0.info, _obj_0.dbg
-end
-local auto_ip, tcp_proto, Fragmented_IP4, TCP, TLS, TLSHandshake, TLSExtension
-do
-  local _obj_0 = require("snihook.ipparse")
-  auto_ip, tcp_proto, Fragmented_IP4, TCP, TLS, TLSHandshake, TLSExtension = _obj_0.auto_ip, _obj_0.IP.protocols.TCP, _obj_0.Fragmented_IP4, _obj_0.TCP, _obj_0.TLS, _obj_0.TLSHandshake, _obj_0.TLSExtension
-end
-local handshake
-handshake = TLS.types.handshake
-local hello
-hello = TLSHandshake.types.hello
-local server_name
-server_name = TLSExtension.types.server_name
+require("ipparse")
+local IP = require("ipparse.l3.auto_ip")
+local Fragmented_IP4 = require("ipparse.l3.fragmented_ip4")
+local TCP = require("ipparse.l4.tcp")
+local TLS = require("ipparse.l7.tls")
+local TLSHandshake = require("ipparse.l7.tls.handshake")
+local TLSClientHello = require("ipparse.l7.tls.handshake.client_hello")
+local SNI = require("ipparse.l7.tls.handshake.extension.server_name")
+local logger = require("log")
+local log
 local get_first
 get_first = function(self, fn)
   for v in self do
@@ -58,29 +52,34 @@ local fragmented_ips = setmetatable({ }, {
   __mode = "kv",
   __index = function(self, id)
     self[id] = Fragmented_IP4()
-    dbg(id, self[id])
+    log.debug(id, self[id])
     return self[id]
   end
 })
 return function(whitelist, log_queue, log_evt)
-  set_log(log_queue, log_evt, log_level, "snihook")
+  do
+    local _with_0 = outbox(log_queue, log_evt)
+    log = logger(log_level, "snihook", function(...)
+      return _with_0:send(...)
+    end)
+  end
   local hook
   hook = function(self)
-    local ip = auto_ip(self)
+    local ip = IP(self)
     if not ip or ip:is_empty() then
       return CONTINUE
     end
     if ip:is_fragment() then
-      dbg("Fragment detected")
+      log.debug("Fragment detected")
       local f_ip = fragmented_ips[ip.id]:insert(ip)
       if not (f_ip:is_complete()) then
         return CONTINUE
       end
-      dbg("Last fragment received")
+      log.debug("Last fragment received")
       ip = f_ip
       fragmented_ips[ip.id] = nil
     end
-    if ip.protocol ~= tcp_proto then
+    if ip.protocol ~= TCP.protocol_type then
       return CONTINUE
     end
     local tcp = TCP(ip.data)
@@ -88,21 +87,22 @@ return function(whitelist, log_queue, log_evt)
       return CONTINUE
     end
     local tls = TLS(tcp.data)
-    if tls:is_empty() or tls.type ~= handshake then
+    if tls:is_empty() or tls.type ~= TLSHandshake.record_type then
       return CONTINUE
     end
     local hshake = TLSHandshake(tls.data)
-    if hshake:is_empty() or hshake.type ~= hello then
+    if hshake:is_empty() or hshake.type ~= TLSClientHello.message_type then
       return CONTINUE
     end
+    local client_hello = TLSClientHello(hshake.data)
     do
-      local sni = get_first(hshake:iter_extensions(), function(self)
-        return self.type == server_name
+      local sni = get_first(client_hello:iter_extensions(), function(self)
+        return self.type == SNI.extension_type
       end)
       if sni then
         sni = sni.server_name
         if whitelist[sni] then
-          return CONTINUE, info(tostring(ip.src) .. " -> " .. tostring(sni) .. " allowed.")
+          return CONTINUE, log.info(tostring(ip.src) .. " -> " .. tostring(sni) .. " allowed.")
         end
         local sni_parts
         do
@@ -126,10 +126,10 @@ return function(whitelist, log_queue, log_evt)
             return _accum_0
           end)(), ".")
           if whitelist[domain] then
-            return CONTINUE, info(tostring(ip.src) .. " -> " .. tostring(sni) .. " allowed as a subdomain of " .. tostring(domain) .. ".")
+            return CONTINUE, log.info(tostring(ip.src) .. " -> " .. tostring(sni) .. " allowed as a subdomain of " .. tostring(domain) .. ".")
           end
         end
-        return DROP, notice(tostring(ip.src) .. " -> " .. tostring(sni) .. " BLOCKED.")
+        return DROP, log.notice(tostring(ip.src) .. " -> " .. tostring(sni) .. " BLOCKED.")
       end
     end
     return CONTINUE

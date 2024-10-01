@@ -1,7 +1,6 @@
 :concat = table
-
-:inbox = require"mailbox"
 :activate, :log_level, :mode = require"snihook.config"
+:outbox = require"mailbox"
 local register, pfs, hooknum, priority, CONTINUE, DROP
 switch mode
   when "bridge"
@@ -11,11 +10,17 @@ switch mode
     :register, family: {:IPV6, :IPV4}, inet_hooks: {FORWARD: hooknum}, ip_priority: {FILTER: priority}, action: {:CONTINUE, :DROP} = require"netfilter"
     pfs = {IPV6, IPV4}
 DROP = activate and DROP or CONTINUE
-:set_log, :notice, :info, :dbg = require"snihook.log"
-:auto_ip, IP: {protocols: {TCP: tcp_proto}}, :Fragmented_IP4, :TCP, :TLS, :TLSHandshake, :TLSExtension = require"snihook.ipparse"
-:handshake = TLS.types
-:hello = TLSHandshake.types
-:server_name = TLSExtension.types
+require"ipparse"
+IP = require"ipparse.l3.auto_ip"
+Fragmented_IP4 = require"ipparse.l3.fragmented_ip4"
+TCP = require"ipparse.l4.tcp"
+TLS = require"ipparse.l7.tls"
+TLSHandshake = require"ipparse.l7.tls.handshake"
+TLSClientHello = require"ipparse.l7.tls.handshake.client_hello"
+SNI = require"ipparse.l7.tls.handshake.extension.server_name"
+logger = require"log"
+local log
+
 
 get_first = (fn) =>  -- Returns first value of an iterator that matches the condition defined in function fn.
   for v in @
@@ -23,44 +28,47 @@ get_first = (fn) =>  -- Returns first value of an iterator that matches the cond
 
 fragmented_ips = setmetatable {},  __mode: "kv", __index: (id) =>
   @[id] = Fragmented_IP4!
-  dbg id, @[id]
+  log.debug id, @[id]
   @[id]
 
 
 (whitelist, log_queue, log_evt) ->
-  set_log log_queue, log_evt, log_level, "snihook"
+  with outbox log_queue, log_evt
+    log = logger log_level, "snihook", (...) -> \send ...
 
   hook = =>
-    ip = auto_ip @
+    ip = IP @
     return CONTINUE if not ip or ip\is_empty!
     if ip\is_fragment!
-      dbg"Fragment detected"
+      log.debug"Fragment detected"
       f_ip = fragmented_ips[ip.id]\insert(ip)
       return CONTINUE unless f_ip\is_complete!
-      dbg"Last fragment received"
+      log.debug"Last fragment received"
       ip = f_ip
       fragmented_ips[ip.id] = nil
-    return CONTINUE if ip.protocol ~= tcp_proto
+    return CONTINUE if ip.protocol ~= TCP.protocol_type
 
     tcp = TCP ip.data
     return CONTINUE if tcp\is_empty! or tcp.dport ~= 443
 
     tls = TLS tcp.data
-    return CONTINUE if tls\is_empty! or tls.type ~= handshake
+    return CONTINUE if tls\is_empty! or tls.type ~= TLSHandshake.record_type
 
     hshake = TLSHandshake tls.data
-    return CONTINUE if hshake\is_empty! or hshake.type ~= hello
+    return CONTINUE if hshake\is_empty! or hshake.type ~= TLSClientHello.message_type
 
-    if sni = get_first hshake\iter_extensions!, => @type == server_name
+    client_hello = TLSClientHello hshake.data
+
+    if sni = get_first client_hello\iter_extensions!, => @type == SNI.extension_type
       sni = sni.server_name
       if whitelist[sni]
-        return CONTINUE, info"#{ip.src} -> #{sni} allowed."
+        return CONTINUE, log.info"#{ip.src} -> #{sni} allowed."
       sni_parts = [ part for part in sni\gmatch"[^%.]+" ]
       for i = 2, #sni_parts
         domain = concat [ part for part in *sni_parts[i,] ], "."
         if whitelist[domain]
-          return CONTINUE, info"#{ip.src} -> #{sni} allowed as a subdomain of #{domain}."
-      return DROP, notice"#{ip.src} -> #{sni} BLOCKED."
+          return CONTINUE, log.info"#{ip.src} -> #{sni} allowed as a subdomain of #{domain}."
+      return DROP, log.notice"#{ip.src} -> #{sni} BLOCKED."
 
     CONTINUE
 

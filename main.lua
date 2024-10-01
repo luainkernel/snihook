@@ -1,11 +1,8 @@
 local rcu = require("rcu")
-local runtime
-runtime = (require("rcu") and require("lunatik")).runtime
-local run, shouldstop
-do
-  local _obj_0 = require("thread")
-  run, shouldstop = _obj_0.run, _obj_0.shouldstop
-end
+local run
+run = (require("rcu") and require("lunatik.runner")).run
+local shouldstop
+shouldstop = require("thread").shouldstop
 local inbox
 inbox = require("mailbox").inbox
 local schedule, time
@@ -16,13 +13,14 @@ end
 return function()
   local whitelist = rcu.table()
   local log = inbox(100 * 1024)
-  local runtimes = { }
-  local rt = runtime("snihook/dev", true)
-  rt:resume(whitelist, log.queue, log.event)
-  runtimes[#runtimes + 1] = rt
-  rt = runtime("snihook/hook", false)
-  rt:resume(whitelist, log.queue, log.event)
-  runtimes[#runtimes + 1] = rt
+  local runtimes = {
+    run("snihook/dev", true),
+    run("snihook/hook", false)
+  }
+  for _index_0 = 1, #runtimes do
+    local rt = runtimes[_index_0]
+    rt:resume(whitelist, log.queue, log.event)
+  end
   local previous = {
     __mode = "kv"
   }

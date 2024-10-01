@@ -18,8 +18,8 @@
 
 
 rcu = require"rcu"
-:runtime = require"rcu" and require"lunatik"
-:run, :shouldstop = require"thread"
+:run = require"rcu" and require"lunatik.runner"
+:shouldstop = require"thread"
 :inbox = require"mailbox"
 :schedule, :time = require"linux"
 
@@ -28,13 +28,11 @@ rcu = require"rcu"
   whitelist = rcu.table!
   log = inbox 100 * 1024
 
-  runtimes = {}
-  rt = runtime "snihook/dev", true
-  rt\resume whitelist, log.queue, log.event
-  runtimes[#runtimes+1] = rt
-  rt = runtime "snihook/hook", false
-  rt\resume whitelist, log.queue, log.event
-  runtimes[#runtimes+1] = rt
+  runtimes = {
+    run("snihook/dev", true),
+    run("snihook/hook", false)
+  }
+  rt\resume whitelist, log.queue, log.event for rt in *runtimes
 
   previous = __mode: "kv"
   while not shouldstop!
@@ -49,3 +47,4 @@ rcu = require"rcu"
       schedule 1000
 
   rt\stop! for rt in *runtimes
+

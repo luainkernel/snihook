@@ -10,7 +10,7 @@ all:
 
 install:
 	mkdir ${LUA_MODULE_DIR}/${NAME} || true
-	cp [!c]*.lua ${LUA_MODULE_DIR}/${NAME}
+	cp --parents `find . -name \*.lua | grep -v config.lua` ${LUA_MODULE_DIR}/${NAME}
 	cp --update=none config.lua ${LUA_MODULE_DIR}/${NAME}
 
 uninstall:
