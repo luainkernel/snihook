@@ -5,6 +5,7 @@ do
 end
 return subclass(Packet, {
   __name = "TLS",
+  iana_port = 443,
   _get_type = function(self)
     return self:byte(0)
   end,

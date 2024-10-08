@@ -20,8 +20,9 @@ local Object = {
         do
           local getter = rawget(self, "_get_" .. tostring(k)) or cls and cls["_get_" .. tostring(k)]
           if getter then
-            self[k] = getter(self)
-            return self[k]
+            local v = getter(self)
+            self[k] = v
+            return v
           elseif cls then
             return cls[k]
           end

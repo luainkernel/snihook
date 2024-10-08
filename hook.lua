@@ -34,7 +34,9 @@ require("ipparse")
 local IP = require("ipparse.l3.auto_ip")
 local Fragmented_IP4 = require("ipparse.l3.fragmented_ip4")
 local TCP = require("ipparse.l4.tcp")
+local UDP = require("ipparse.l4.udp")
 local TLS = require("ipparse.l7.tls")
+local DNS = require("ipparse.l7.dns")
 local TLSHandshake = require("ipparse.l7.tls.handshake")
 local TLSClientHello = require("ipparse.l7.tls.handshake.client_hello")
 local SNI = require("ipparse.l7.tls.handshake.extension.server_name")
@@ -56,6 +58,106 @@ local fragmented_ips = setmetatable({ }, {
     return self[id]
   end
 })
+local check
+check = function(self, whitelist)
+  if whitelist[self] then
+    return true, tostring(self) .. " allowed"
+  end
+  local domain_parts
+  do
+    local _accum_0 = { }
+    local _len_0 = 1
+    for part in self:gmatch("[^%.]+") do
+      _accum_0[_len_0] = part
+      _len_0 = _len_0 + 1
+    end
+    domain_parts = _accum_0
+  end
+  for i = 2, #domain_parts do
+    local domain = concat((function()
+      local _accum_0 = { }
+      local _len_0 = 1
+      for _index_0 = i, #domain_parts do
+        local part = domain_parts[_index_0]
+        _accum_0[_len_0] = part
+        _len_0 = _len_0 + 1
+      end
+      return _accum_0
+    end)(), ".")
+    if whitelist[domain] then
+      return true, tostring(self) .. " allowed as a subdomain of " .. tostring(domain)
+    end
+  end
+  return false, tostring(self) .. " BLOCKED"
+end
+local filter_sni
+filter_sni = function(self, whitelist)
+  if self.protocol ~= TCP.protocol_type then
+    return 
+  end
+  local tcp = TCP(self.data)
+  if tcp:is_empty() or tcp.dport ~= TLS.iana_port then
+    return 
+  end
+  local tls = TLS(tcp.data)
+  if tls:is_empty() or tls.type ~= TLSHandshake.record_type then
+    return 
+  end
+  local hshake = TLSHandshake(tls.data)
+  if hshake:is_empty() or hshake.type ~= TLSClientHello.message_type then
+    return 
+  end
+  local client_hello = TLSClientHello(hshake.data)
+  do
+    local sni = get_first(client_hello:iter_extensions(), function(self)
+      return self.type == SNI.extension_type
+    end)
+    if sni then
+      sni = sni.server_name
+      local ok, msg = check(sni, whitelist)
+      if ok then
+        return CONTINUE, log.info(tostring(self.src) .. " -> " .. tostring(msg) .. " (SNI)")
+      else
+        return DROP, log.notice(tostring(self.src) .. " -> " .. tostring(msg) .. " (SNI)")
+      end
+    end
+  end
+end
+local filter_dns
+filter_dns = function(self, whitelist)
+  if self.protocol ~= UDP.protocol_type then
+    return 
+  end
+  local udp = UDP(self.data)
+  if udp:is_empty() or udp.sport ~= DNS.iana_port then
+    return 
+  end
+  local dns = DNS(udp.data)
+  if dns:is_empty() then
+    return 
+  end
+  do
+    local q = dns.question
+    if q then
+      do
+        local domain = q.qname
+        if domain then
+          local _list_0 = dns.answers
+          for _index_0 = 1, #_list_0 do
+            local a = _list_0[_index_0]
+            log.info("DNS answer type: " .. tostring(DNS.types[a.type]) .. ", rdata: " .. tostring(concat(a.rdata, ',')))
+          end
+          local ok, msg = check(domain, whitelist)
+          if ok then
+            return CONTINUE, log.info(tostring(self.dst) .. " -> " .. tostring(msg) .. " (DNS)")
+          else
+            return DROP, log.notice(tostring(self.dst) .. " -> " .. tostring(msg) .. " (DNS)")
+          end
+        end
+      end
+    end
+  end
+end
 return function(whitelist, log_queue, log_evt)
   do
     local _with_0 = outbox(log_queue, log_evt)
@@ -79,57 +181,16 @@ return function(whitelist, log_queue, log_evt)
       ip = f_ip
       fragmented_ips[ip.id] = nil
     end
-    if ip.protocol ~= TCP.protocol_type then
-      return CONTINUE
-    end
-    local tcp = TCP(ip.data)
-    if tcp:is_empty() or tcp.dport ~= 443 then
-      return CONTINUE
-    end
-    local tls = TLS(tcp.data)
-    if tls:is_empty() or tls.type ~= TLSHandshake.record_type then
-      return CONTINUE
-    end
-    local hshake = TLSHandshake(tls.data)
-    if hshake:is_empty() or hshake.type ~= TLSClientHello.message_type then
-      return CONTINUE
-    end
-    local client_hello = TLSClientHello(hshake.data)
-    do
-      local sni = get_first(client_hello:iter_extensions(), function(self)
-        return self.type == SNI.extension_type
-      end)
-      if sni then
-        sni = sni.server_name
-        if whitelist[sni] then
-          return CONTINUE, log.info(tostring(ip.src) .. " -> " .. tostring(sni) .. " allowed.")
-        end
-        local sni_parts
-        do
-          local _accum_0 = { }
-          local _len_0 = 1
-          for part in sni:gmatch("[^%.]+") do
-            _accum_0[_len_0] = part
-            _len_0 = _len_0 + 1
-          end
-          sni_parts = _accum_0
-        end
-        for i = 2, #sni_parts do
-          local domain = concat((function()
-            local _accum_0 = { }
-            local _len_0 = 1
-            for _index_0 = i, #sni_parts do
-              local part = sni_parts[_index_0]
-              _accum_0[_len_0] = part
-              _len_0 = _len_0 + 1
-            end
-            return _accum_0
-          end)(), ".")
-          if whitelist[domain] then
-            return CONTINUE, log.info(tostring(ip.src) .. " -> " .. tostring(sni) .. " allowed as a subdomain of " .. tostring(domain) .. ".")
-          end
-        end
-        return DROP, log.notice(tostring(ip.src) .. " -> " .. tostring(sni) .. " BLOCKED.")
+    local _list_0 = {
+      filter_sni,
+      filter_dns
+    }
+    for _index_0 = 1, #_list_0 do
+      local filter = _list_0[_index_0]
+      local res = filter(ip, whitelist)
+      log.debug("RES: " .. tostring(res))
+      if res then
+        return res
       end
     end
     return CONTINUE

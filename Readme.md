@@ -11,8 +11,8 @@ Install [lunatik](https://github.com/luainkernel/lunatik).
 Install snihook:
 
 ```sh
-git clone https://github.com/jperon/lunatik_snihook
-cd lunatik_snihook
+git clone https://github.com/luainkernel/snihook
+cd snihook
 sudo make install                                              # installs the extension to Xtables directory, and lua files to module directory
 ```
 

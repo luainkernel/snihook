@@ -3,6 +3,8 @@
 subclass Packet, {
   __name: "TLS"
 
+  iana_port: 443
+
   _get_type: => @byte 0
 
   _get_version: => "#{@byte 1}.#{@byte 2}"
@@ -11,3 +13,4 @@ subclass Packet, {
 
   data_off: 5
 }
+

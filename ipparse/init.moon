@@ -13,8 +13,9 @@ Object = {
     setmetatable obj, {
       __index: (k) =>
         if getter = rawget(@, "_get_#{k}") or cls and cls["_get_#{k}"]
-          @[k] = getter @
-          @[k]
+          v = getter @
+          @[k] = v
+          v
         elseif cls
           cls[k]
       __call: (...) => obj\new ...
