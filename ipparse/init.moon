@@ -85,7 +85,6 @@ Packet = subclass Object, {
   _get_data: => skb: @skb, off: @off + @data_off
 }
 
-{
-  :log,
-  :Object, :subclass, :Packet
-}
+
+:log, :Object, :subclass, :Packet
+

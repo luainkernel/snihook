@@ -3,11 +3,8 @@ do
   local _obj_0 = require("ipparse")
   subclass, Packet = _obj_0.subclass, _obj_0.Packet
 end
-local concat, unpack
-do
-  local _obj_0 = table
-  concat, unpack = _obj_0.concat, _obj_0.unpack
-end
+local concat
+concat = table.concat
 return subclass(Packet, {
   __name = "DNSQuestion",
   _get_labels_offsets = function(self)
@@ -19,11 +16,17 @@ return subclass(Packet, {
         break
       end
       pos = pos + 1
-      offsets[i] = {
-        pos,
-        size >= 192 and 1 or size
-      }
-      if size >= 192 then
+      if size & 0xC0 == 0 then
+        offsets[#offsets + 1] = {
+          pos,
+          size
+        }
+      else
+        local off = ((size & 0x3F) << 8) + self:byte(pos)
+        offsets[#offsets + 1] = {
+          off + 1,
+          self:byte(off)
+        }
         break
       end
       pos = pos + size
@@ -33,8 +36,22 @@ return subclass(Packet, {
   _get_labels = function(self)
     local labels = { }
     local offs = self.labels_offsets
-    for i = 1, #offs do
-      labels[#labels + 1] = self:str(unpack(offs[i]))
+    for _index_0 = 1, #offs do
+      local _des_0 = offs[_index_0]
+      local o, len, ptr
+      o, len, ptr = _des_0[1], _des_0[2], _des_0[3]
+      if len == 0 then
+        for _index_1 = 1, #offs do
+          local _des_1 = offs[_index_1]
+          local _o, _len
+          _o, _len = _des_1[1], _des_1[2]
+          if _o == ptr then
+            o, len = _o, _len
+            break
+          end
+        end
+      end
+      labels[#labels + 1] = self:str(o, len)
     end
     return labels
   end,

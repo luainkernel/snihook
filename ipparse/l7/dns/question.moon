@@ -1,5 +1,5 @@
 :subclass, :Packet = require"ipparse"
-:concat, :unpack = table
+:concat = table
 
 subclass Packet, {
   __name: "DNSQuestion"
@@ -11,17 +11,25 @@ subclass Packet, {
       size = @byte pos
       break if size == 0
       pos += 1
-      offsets[i] = {pos, size >= 192 and 1 or size}
-      --TODO implement DNS compression
-      break if size >= 192
+      if size & 0xC0 == 0
+        offsets[#offsets+1] = {pos, size}
+      else
+        off = ((size & 0x3F) << 8) + @byte pos
+        offsets[#offsets+1] = {off+1, @byte off}
+        break
       pos += size
     offsets
 
   _get_labels: =>
     labels = {}
     offs = @labels_offsets
-    for i = 1, #offs
-      labels[#labels+1] = @str unpack offs[i]
+    for {o, len, ptr} in *offs
+      if len == 0
+        for {_o, _len} in *offs
+          if _o == ptr
+            o, len = _o, _len
+            break
+      labels[#labels+1] = @str o, len
     labels
 
   _get_qtype_offset: =>

@@ -1,5 +1,9 @@
 return {
   activate = false,
   log_level = "NOTICE",
-  mode = "bridge"
+  mode = "bridge",
+  filters = {
+    "dns",
+    "sni"
+  }
 }

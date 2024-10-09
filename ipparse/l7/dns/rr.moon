@@ -9,9 +9,9 @@ subclass Packet, {
     pos = 0
     for i = 1, 1000
       size = @byte pos
-      break if size == 0  -- TODO: implement DNS compression parsing
+      break if size == 0
       pos += 1
-      offsets[#offsets+1] = {pos, size & 0xC0 and 0 or size}
+      offsets[#offsets+1] = {pos, (size & 0xC0 and 0 or size), size & 0x3F}
       break if size & 0xC0
       pos += size
     offsets
@@ -19,8 +19,13 @@ subclass Packet, {
   _get_labels: =>
     labels = {}
     offs = @labels_offsets
-    for i = 1, #offs
-      labels[#labels+1] = @str unpack offs[i]
+    for {o, len, ptr} in *offs
+      if len == 0
+        for {_o, _len} in *offs
+          if _o == ptr
+            o, len = _o, _len
+            break
+      labels[#labels+1] = @str o, len
     labels
 
   _get_type_offset: =>

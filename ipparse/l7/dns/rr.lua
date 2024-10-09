@@ -18,7 +18,8 @@ return subclass(Packet, {
       pos = pos + 1
       offsets[#offsets + 1] = {
         pos,
-        size & 0xC0 and 0 or size
+        (size & 0xC0 and 0 or size),
+        size & 0x3F
       }
       if size & 0xC0 then
         break
@@ -30,8 +31,22 @@ return subclass(Packet, {
   _get_labels = function(self)
     local labels = { }
     local offs = self.labels_offsets
-    for i = 1, #offs do
-      labels[#labels + 1] = self:str(unpack(offs[i]))
+    for _index_0 = 1, #offs do
+      local _des_0 = offs[_index_0]
+      local o, len, ptr
+      o, len, ptr = _des_0[1], _des_0[2], _des_0[3]
+      if len == 0 then
+        for _index_1 = 1, #offs do
+          local _des_1 = offs[_index_1]
+          local _o, _len
+          _o, _len = _des_1[1], _des_1[2]
+          if _o == ptr then
+            o, len = _o, _len
+            break
+          end
+        end
+      end
+      labels[#labels + 1] = self:str(o, len)
     end
     return labels
   end,

@@ -1,9 +1,9 @@
 local concat
 concat = table.concat
-local activate, log_level, mode
+local activate, log_level, mode, filters
 do
   local _obj_0 = require("snihook.config")
-  activate, log_level, mode = _obj_0.activate, _obj_0.log_level, _obj_0.mode
+  activate, log_level, mode, filters = _obj_0.activate, _obj_0.log_level, _obj_0.mode, _obj_0.filters
 end
 local outbox
 outbox = require("mailbox").outbox
@@ -92,6 +92,7 @@ check = function(self, whitelist)
 end
 local filter_sni
 filter_sni = function(self, whitelist)
+  log.debug("FILTER SNI")
   if self.protocol ~= TCP.protocol_type then
     return 
   end
@@ -125,6 +126,7 @@ filter_sni = function(self, whitelist)
 end
 local filter_dns
 filter_dns = function(self, whitelist)
+  log.debug("FILTER DNS")
   if self.protocol ~= UDP.protocol_type then
     return 
   end
@@ -158,6 +160,10 @@ filter_dns = function(self, whitelist)
     end
   end
 end
+local _filters = {
+  dns = filter_dns,
+  sni = filter_sni
+}
 return function(whitelist, log_queue, log_evt)
   do
     local _with_0 = outbox(log_queue, log_evt)
@@ -181,16 +187,19 @@ return function(whitelist, log_queue, log_evt)
       ip = f_ip
       fragmented_ips[ip.id] = nil
     end
-    local _list_0 = {
-      filter_sni,
-      filter_dns
-    }
-    for _index_0 = 1, #_list_0 do
-      local filter = _list_0[_index_0]
-      local res = filter(ip, whitelist)
-      log.debug("RES: " .. tostring(res))
-      if res then
-        return res
+    for _index_0 = 1, #filters do
+      local name = filters[_index_0]
+      do
+        local filter = _filters[name]
+        if filter then
+          local res = filter(ip, whitelist)
+          log.debug("RES: " .. tostring(res))
+          if res then
+            return res
+          end
+        else
+          log.warning("Unknown filter " .. tostring(name))
+        end
       end
     end
     return CONTINUE

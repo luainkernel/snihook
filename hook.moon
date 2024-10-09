@@ -1,5 +1,5 @@
 :concat = table
-:activate, :log_level, :mode = require"snihook.config"
+:activate, :log_level, :mode, :filters = require"snihook.config"
 :outbox = require"mailbox"
 local register, pfs, hooknum, priority, CONTINUE, DROP
 switch mode
@@ -47,6 +47,7 @@ check = (whitelist) =>
 
 
 filter_sni = (whitelist) =>
+  log.debug"FILTER SNI"
   return if @protocol ~= TCP.protocol_type
 
   tcp = TCP @data
@@ -70,6 +71,7 @@ filter_sni = (whitelist) =>
 
 
 filter_dns = (whitelist) =>
+  log.debug"FILTER DNS"
   return if @protocol ~= UDP.protocol_type
 
   udp = UDP @data
@@ -89,6 +91,9 @@ filter_dns = (whitelist) =>
         return DROP, log.notice"#{@dst} -> #{msg} (DNS)"
 
 
+_filters = dns: filter_dns, sni: filter_sni
+
+
 (whitelist, log_queue, log_evt) ->
   with outbox log_queue, log_evt
     log = logger log_level, "snihook", (...) -> \send ...
@@ -104,10 +109,13 @@ filter_dns = (whitelist) =>
       ip = f_ip
       fragmented_ips[ip.id] = nil
 
-    for filter in *{filter_sni, filter_dns}
-      res = filter ip, whitelist
-      log.debug"RES: #{res}"
-      return res if res
+    for name in *filters
+      if filter = _filters[name]
+        res = filter ip, whitelist
+        log.debug"RES: #{res}"
+        return res if res
+      else
+        log.warning "Unknown filter #{name}"
 
     CONTINUE
 
