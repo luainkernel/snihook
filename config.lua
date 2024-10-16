@@ -5,5 +5,7 @@ return {
   filters = {
     "dns",
     "sni"
-  }
+  },
+  xdp = true,
+  netfilter = false
 }

@@ -1,5 +1,7 @@
 local new
 new = require("device").new
+local map
+map = require("rcu").map
 local _true = require("data").new(1)
 local IRUSR, IWUSR
 do
@@ -8,44 +10,33 @@ do
 end
 local log_level
 log_level = require("snihook.config").log_level
-local outbox
-outbox = require("mailbox").outbox
 local logger = require("log")
-local concat
-concat = table.concat
-local _whitelist = { }
+local concat, sort
+do
+  local _obj_0 = table
+  concat, sort = _obj_0.concat, _obj_0.sort
+end
 local nop
 nop = function() end
-return function(whitelist, log_queue, log_evt)
-  local log
-  do
-    local _with_0 = outbox(log_queue, log_evt)
-    log = logger(log_level, "snihook", function(...)
-      return _with_0:send(...)
-    end)
-  end
+return function(whitelist)
+  local log = logger(log_level, "snihook")
   local read
   read = function()
-    return concat((function()
-      local _accum_0 = { }
-      local _len_0 = 1
-      for k in pairs(_whitelist) do
-        _accum_0[_len_0] = k
-        _len_0 = _len_0 + 1
-      end
-      return _accum_0
-    end)(), ",") .. "\n"
+    local lst = { }
+    map(whitelist, function(self)
+      lst[#lst + 1] = self
+    end)
+    sort(lst)
+    return concat(lst, ",") .. "\n"
   end
   local write
   write = function(self, s)
     for action, domain in s:gmatch("(%S+)%s(%S+)") do
-      if action == "add" then
+      if action == "+" then
         whitelist[domain] = _true
-        _whitelist[domain] = _true
         log.info("Added " .. tostring(domain) .. " to whitelist")
-      elseif action == "del" then
+      elseif action == "-" then
         whitelist[domain] = nil
-        _whitelist[domain] = nil
         log.info("Removed " .. tostring(domain) .. " from whitelist")
       end
     end
