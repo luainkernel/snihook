@@ -35,7 +35,7 @@ check = (whitelist) =>
 
 
 filter_sni = (whitelist) =>
-  log.debug"SNI filter #{@protocol == TCP.protocol_type}"
+  log.debug"SNI filter"
   return if @protocol ~= TCP.protocol_type
 
   tcp = TCP @data
@@ -96,7 +96,7 @@ _filters = dns: filter_dns, sni: filter_sni
     return true if not @ or @is_empty!
     log.debug "IP: src #{@src}, dst #{@dst}"
     if @is_fragment!
-      log.debug"Fragment detected"
+      log.debug"Fragment detected: #{@length}"
       f_ip = collect @
       return true unless f_ip  -- Allow fragments: blocking the last one will be enough
       log.debug"Last fragment received"

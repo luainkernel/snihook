@@ -62,7 +62,7 @@ check = function(self, whitelist)
 end
 local filter_sni
 filter_sni = function(self, whitelist)
-  log.debug("SNI filter " .. tostring(self.protocol == TCP.protocol_type))
+  log.debug("SNI filter")
   if self.protocol ~= TCP.protocol_type then
     return 
   end
@@ -151,7 +151,7 @@ return function(whitelist)
     end
     log.debug("IP: src " .. tostring(self.src) .. ", dst " .. tostring(self.dst))
     if self:is_fragment() then
-      log.debug("Fragment detected")
+      log.debug("Fragment detected: " .. tostring(self.length))
       local f_ip = collect(self)
       if not (f_ip) then
         return true
