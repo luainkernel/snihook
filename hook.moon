@@ -1,9 +1,12 @@
-:concat = table
+concat = table.concat
 cfg = require"snihook.config"
-:log_level, :mode, :filters = cfg
 xdp = require"xdp"
 nf = require"netfilter"
-:ntoh16 = require"linux"
+linux = require"linux"
+ntoh16, time = linux.ntoh16, linux.time
+range, wrap = do
+  _ = require"fun"
+  _.range, _.wrap
 require"ipparse"
 IP = require"ipparse.l3.auto_ip"
 :collect = require"ipparse.l3.fragmented_ip4"
@@ -23,38 +26,44 @@ get_first = (fn) =>  -- Returns first value of an iterator that matches the cond
     return v if fn v
 
 
+seconds = -> time! / 1000000000
+
+
 check = (whitelist) =>
   if whitelist[@]
     return true, "#{@} allowed"
-  domain_parts = [ part for part in @gmatch"[^%.]+" ]
+  domain_parts = wrap(@gmatch"[^%.]+")\toarray!
   for i = 2, #domain_parts
-    domain = concat [ part for part in *domain_parts[i,] ], "."
+    domain = concat range(i, #domain_parts)\map(=> domain_parts[@])\toarray!, "."
     if whitelist[domain]
       return true, "#{@} allowed as a subdomain of #{domain}"
   false, "#{@} BLOCKED"
 
+
+allowed_tls = {}
 
 filter_sni = (whitelist) =>
   log.debug"SNI filter"
   return if @protocol ~= TCP.protocol_type
 
   tcp = TCP @data
-  --log.debug l for l in *tcp.hexdump
+  log.debug l for l in tcp\hexdump!
   return if tcp\is_empty! or tcp.dport ~= TLS.iana_port
 
   tls = TLS tcp.data
-  --log.debug l for l in *tls.hexdump
-  return if tls\is_empty! or tls.type ~= TLSHandshake.record_type
+  return if tls\is_empty!
+  if tls.type ~= TLSHandshake.record_type  -- This rule is quite fussy: it will block any tls traffic without SNI
+    return not not (allowed_tls["#{@src}_#{@dst}"] or allowed_tls["#{@dst}_#{@src}"]) or false, "#{@src} #{@dst} BLOCKED (TLS)"
 
   hshake = TLSHandshake tls.data
-  return if hshake\is_empty! or hshake.type ~= TLSClientHello.message_type
+  if hshake\is_empty! or hshake.type ~= TLSClientHello.message_type
+    return true, "TLS Handshake allowed"
 
   client_hello = TLSClientHello hshake.data
-  -- log.debug l for l in *client_hello.hexdump
 
   if sni = get_first client_hello\iter_extensions!, => @type == SNI.extension_type
-    sni = sni.server_name
-    ok, msg = check sni, whitelist
+    ok, msg = check sni.server_name, whitelist
+    allowed_tls["#{@src}_#{@dst}"] = seconds! if ok
     ok, "#{@src} -> #{msg} (SNI)"
 
 
@@ -64,7 +73,7 @@ filter_dns = (whitelist) =>
   local pkt, is_tcp
   if protocol == UDP.protocol_type
     pkt = UDP @data
-  elseif protocol == TCP.protocol_type and TCP(@data)
+  elseif protocol == TCP.protocol_type and TCP @data
     pkt = TCP @data
     is_tcp = true
   else return
@@ -78,19 +87,28 @@ filter_dns = (whitelist) =>
 
   if q = dns.question
     if domain = q.qname
-      if dns.answers
-        for a in *dns.answers
+      if answers = dns.answers
+        for i = 1, #answers
+          a = answers[i]
           log.info "DNS answer type: #{DNS.types[a.type]}, rdata: #{concat a.rdata, ','}"
       ok, msg = check domain, whitelist
       ok, "#{@src} -> #{@dst} #{msg} (DNS)"
 
 
-_filters = dns: filter_dns, sni: filter_sni
+block_quic = =>
+  return if @protocol ~= UDP.protocol_type
+  pkt = UDP @data
+  false, "QUIC blocked #{@src} -> #{@dst}" if pkt.dport == 443
+
+
+_filters = dns: filter_dns, sni: filter_sni, quic: block_quic
 
 
 (whitelist) ->
-  log = logger log_level, "snihook"
+  log = logger cfg.log_level, "snihook"
+  filters = cfg.filters
   report = {[true]: log.info, [false]: log.notice}
+  gc = 0
 
   is_allowed = =>
     return true if not @ or @is_empty!
@@ -101,16 +119,22 @@ _filters = dns: filter_dns, sni: filter_sni
       return true unless f_ip  -- Allow fragments: blocking the last one will be enough
       log.debug"Last fragment received"
       @ = f_ip
-    --log.debug l for l in *@hexdump
 
-    for name in *filters
+    for _, name in ipairs filters
       if filter = _filters[name]
         ok, msg = filter @, whitelist
         return ok, report[ok](msg) if ok ~= nil
       else
         log.warning "Unknown filter #{name}"
 
-    true
+    t = seconds!
+    if t - gc > 60
+      for k, v in pairs allowed_tls
+        if t - v > 86400
+          allowed_tls[k] = nil
+      gc = t
+
+    true, log.info"#{@src} -> #{@dst} (#{@protocol} #{UDP(@data).dport}) allowed"
 
 
   if cfg.xdp
@@ -121,8 +145,8 @@ _filters = dns: filter_dns, sni: filter_sni
       is_allowed(IP :skb, :off) and PASS or DROP
 
   if cfg.netfilter
-    local register, pfs, hooknum, priority, CONTINUE
-    switch mode
+    local register, pfs, hooknum, priority, CONTINUE, DROP
+    switch cfg.mode
       when "bridge"
         :register, family: {:BRIDGE}, bridge_hooks: {FORWARD: hooknum}, bridge_priority: {FILTER_BRIDGED: priority}, action: {:CONTINUE, :DROP} = nf
         pfs = {BRIDGE}
