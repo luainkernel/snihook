@@ -1,11 +1,15 @@
 return {
   activate = false,
-  log_level = "NOTICE",
-  mode = "bridge",
+  log_level = "DEBUG",
+  log_rate_limit_window = 2,
+  log_rate_limit_burst = 1,
+  mode = "local",
   filters = {
     "dns",
-    "sni"
+    "sni",
+    "quic"
   },
-  xdp = true,
-  netfilter = false
+  quic_mailbox_size = 262144,
+  xdp = false,
+  netfilter = true
 }
