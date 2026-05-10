@@ -8,7 +8,7 @@ LUNATIK_EBPF_INSTALL_PATH = /usr/local/lib/bpf/lunatik
 
 
 all:
-	moonc . || echo "Install MoonScript if you intend to modify sources."
+	moonc ./*.moon || echo "Install MoonScript if you intend to modify sources."
 
 install:
 	mkdir ${LUA_MODULE_DIR}/${NAME} || true

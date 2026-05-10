@@ -53,8 +53,8 @@ Set `netfilter = true` in `/lib/modules/lua/snihook/config.lua`.
 ```sh
 sudo lunatik spawn snihook/main                      # runs the Lua kernel script
 sudo xdp-loader load -m skb eth0 xdp.o               # if using XDP: replace eth0 by your interface.
-echo "add github.com" | sudo tee /dev/sni_whitelist  # opens access to https://github.com (and subdomains of github.com)
-echo "del github.com" | sudo tee /dev/sni_whitelist  # removes access to https://github.com (and subdomains not open otherwise)
+echo "+ github.com" | sudo tee /dev/sni_whitelist  # opens access to https://github.com (and subdomains of github.com)
+echo "- github.com" | sudo tee /dev/sni_whitelist  # removes access to https://github.com (and subdomains not open otherwise)
 sudo xdp-loader unload eth0 --all                    # unloads the XDP helper
 sudo lunatik stop snihook/main                       # stops the Lua kernel script
 ```
