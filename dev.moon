@@ -4,15 +4,15 @@
 :new = require"device"
 :map = require"rcu"
 _true = require"data".new 1
-stat: {:IRUSR, :IWUSR} = require"linux"
-:log_level = require"snihook.config"
-logger = require"log"
+{:IRUSR, :IWUSR} = require"linux.stat"
+cfg = require"snihook.config"
+logger = require"snihook.log"
 :concat, :sort = table
 
 nop = ->  -- Do nothing
 
 (whitelist) ->
-  log = logger log_level, "snihook"
+  log = logger cfg.log_level, "snihook", rate_limit_window: cfg.log_rate_limit_window, rate_limit_burst: cfg.log_rate_limit_burst
 
   read = ->
     lst = {}
@@ -28,4 +28,3 @@ nop = ->  -- Do nothing
         whitelist[domain] = nil
         log.info"Removed #{domain} from whitelist"
   new name: "sni_whitelist", mode: (IRUSR | IWUSR), open: nop, release: nop, :read, :write
-

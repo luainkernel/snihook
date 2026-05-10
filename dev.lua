@@ -5,12 +5,11 @@ map = require("rcu").map
 local _true = require("data").new(1)
 local IRUSR, IWUSR
 do
-  local _obj_0 = require("linux")
-  IRUSR, IWUSR = _obj_0.stat.IRUSR, _obj_0.stat.IWUSR
+  local _obj_0 = require("linux.stat")
+  IRUSR, IWUSR = _obj_0.IRUSR, _obj_0.IWUSR
 end
-local log_level
-log_level = require("snihook.config").log_level
-local logger = require("log")
+local cfg = require("snihook.config")
+local logger = require("snihook.log")
 local concat, sort
 do
   local _obj_0 = table
@@ -19,7 +18,10 @@ end
 local nop
 nop = function() end
 return function(whitelist)
-  local log = logger(log_level, "snihook")
+  local log = logger(cfg.log_level, "snihook", {
+    rate_limit_window = cfg.log_rate_limit_window,
+    rate_limit_burst = cfg.log_rate_limit_burst
+  })
   local read
   read = function()
     local lst = { }
