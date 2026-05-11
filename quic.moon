@@ -6,9 +6,11 @@ raw = require"socket.raw"
 socket = require"socket"
 :af, :sock, :ipproto = require"linux.socket"
 :shouldstop = require"thread"
-:time = require"linux"
+:time, :schedule = require"linux"
 :range, :wrap = require"ipparse.fun"
 IP = require"ipparse.l3.ip"
+:checksum = require"ipparse.l3.lib"
+UDP = require"ipparse.l4.udp"
 QUIC = require"ipparse.l4.quic"
 QSession = require"ipparse.l7.quic.session"
 logger = require"snihook.log"
@@ -55,28 +57,11 @@ get_raw_socket = (sockets, ifindex) ->
   sock_or_err
 
 
-ip_checksum = (hdr) ->
-  sum = 0
-  i = 1
-  while i <= #hdr
-    hi = hdr\byte i
-    lo = (i + 1 <= #hdr) and hdr\byte(i + 1) or 0
-    sum += (hi * 256) + lo
-    sum = (sum & 0xFFFF) + (sum >> 16)
-    i += 2
-  (~sum) & 0xFFFF
-
-
 split_quic_payload = (payload) ->
-  parts = {}
-  off = 1
-  while off <= #payload
-    ok, q = pcall QUIC.parse, payload, off
-    return nil, "cannot split QUIC coalesced payload at offset #{off}" unless ok and q and q.long_header and q.pn_off and q.pkt_length
-    e = (q.pn_off - 1) + q.pkt_length
-    return nil, "invalid QUIC bounds while splitting at offset #{off}" unless e >= off and e <= #payload
-    parts[#parts + 1] = payload\sub off, e
-    off = e + 1
+  packets, err = QUIC.split_datagrams payload, 1
+  return nil, err unless packets
+  parts = [p.data for p in *packets]
+  return nil, "empty QUIC payload while splitting" if #parts == 0
   parts
 
 
@@ -113,11 +98,62 @@ split_ipv4_gso_udp = (ip_packet, payload) ->
     this_id = (ip_id + i - 1) & 0xFFFF
     ip_hdr_wo = string.pack ">BBHHHBBH", b1, tos, total_len, this_id, frag, ttl, proto, 0
     ip_hdr = ip_hdr_wo .. src .. dst
-    csum = ip_checksum ip_hdr
+    csum = checksum ip_hdr
     ip_hdr = string.pack(">BBHHHBBH", b1, tos, total_len, this_id, frag, ttl, proto, csum) .. src .. dst
     udp = string.pack(">HHHH", spt, dpt, udp_len, 0) .. part
     packets[#packets + 1] = ip_hdr .. udp
   packets
+
+
+is_linklocal_v6 = (addr) ->
+  return false unless addr and #addr == 16
+  b1 = addr\byte 1
+  b2 = addr\byte 2
+  b1 == 0xFE and (b2 & 0xC0) == 0x80
+
+
+pack_sockaddr_in6 = (addr, port=0, ifindex=0) ->
+  scope_id = is_linklocal_v6(addr) and (tonumber(ifindex) or 0) or 0
+  string.pack(">H", port) .. string.pack(">I4", 0) .. addr .. string.pack("=I4", scope_id)
+
+
+split_ipv6_gso_udp = (ip_packet, payload) ->
+  return nil, "missing ip_packet bytes" unless ip_packet and #ip_packet >= 48
+  ip_h, l4_off = IP.parse ip_packet, 1
+  return nil, "not an IPv6 packet" unless ip_h and ip_h.version == 6
+  return nil, "IPv6 next header is not UDP" unless ip_h.next_header == 17
+  udp_h = UDP.parse ip_packet, l4_off
+  return nil, "short IPv6 UDP header" unless udp_h
+
+  parts, err = split_quic_payload payload
+  return nil, err unless parts and #parts > 0
+
+  packets = {}
+  for _, part in ipairs parts
+    udp = UDP.new spt: udp_h.spt, dpt: udp_h.dpt, checksum: 0, data: part
+    udp_pkt = tostring udp
+    udp.checksum = UDP.checksum6 ip_h.src, ip_h.dst, udp_pkt
+    packets[#packets + 1] = tostring udp
+  packets
+
+
+send_ipv6_udp = (raw_ip6, udp_pkt, dst, dpt, ifindex) ->
+  addrs = {
+    pack_sockaddr_in6(dst, dpt, ifindex)
+    pack_sockaddr_in6(dst, 0, ifindex)
+    pack_sockaddr_in6(dst, dpt, 0)
+    pack_sockaddr_in6(dst, 0, 0)
+  }
+  last_err = nil
+  max_tries = 4
+  for sockaddr in *addrs
+    for _ = 1, max_tries
+      ok, ret = pcall raw_ip6.send, raw_ip6, udp_pkt, sockaddr
+      return true if ok and ret and ret > 0
+      last_err = ret
+      break unless "#{ret}"\find "ENOBUFS"
+      schedule 1
+  nil, last_err
 
 
 relay_ipv4_with_split = (sockets, packet) ->
@@ -142,6 +178,25 @@ relay_ipv4_with_split = (sockets, packet) ->
   true, sent
 
 
+relay_ipv6_with_split = (sockets, packet) ->
+  raw_ip6 = sockets._raw_ip6
+  unless raw_ip6
+    ok_raw, raw_or_err = pcall socket.new, af.INET6, sock.RAW, ipproto.UDP
+    return nil, raw_or_err unless ok_raw and raw_or_err
+    raw_ip6 = raw_or_err
+    sockets._raw_ip6 = raw_ip6
+
+  parts, err = split_ipv6_gso_udp packet.ip_packet, packet.payload
+  return nil, err unless parts
+
+  sent = 0
+  for udp_pkt in *parts
+    ok, ret = send_ipv6_udp raw_ip6, udp_pkt, packet.dst, packet.dpt, packet.ifindex
+    return nil, ret unless ok
+    sent += 1
+  true, sent
+
+
 relay_packet = (sockets, packet) ->
   if packet.frame and #packet.frame > 0
     sock, err = get_raw_socket sockets, packet.ifindex
@@ -151,44 +206,49 @@ relay_packet = (sockets, packet) ->
     return true
 
   return nil, "missing IP packet bytes" unless packet.ip_packet and #packet.ip_packet > 0
-  return nil, "IPv6 raw relay not supported yet" unless #packet.dst == 4
+  if #packet.dst == 4
+    ok_u32, dst_u32 = pcall string.unpack, ">I4", packet.dst
+    return nil, "invalid IPv4 destination format" unless ok_u32 and dst_u32
 
-  ok_u32, dst_u32 = pcall string.unpack, ">I4", packet.dst
-  return nil, "invalid IPv4 destination format" unless ok_u32 and dst_u32
+    raw_ip = sockets._raw_ip
+    unless raw_ip
+      ok_raw, raw_or_err = pcall socket.new, af.INET, sock.RAW, ipproto.RAW
+      return nil, raw_or_err unless ok_raw and raw_or_err
+      raw_ip = raw_or_err
+      sockets._raw_ip = raw_ip
 
-  raw_ip = sockets._raw_ip
-  unless raw_ip
-    ok_raw, raw_or_err = pcall socket.new, af.INET, sock.RAW, ipproto.RAW
-    return nil, raw_or_err unless ok_raw and raw_or_err
-    raw_ip = raw_or_err
-    sockets._raw_ip = raw_ip
+    ok, sent_or_err = pcall raw_ip.send, raw_ip, packet.ip_packet, dst_u32, 0
+    if ok and sent_or_err and sent_or_err > 0
+      return true
+    if (not ok) and "#{sent_or_err}"\find "EMSGSIZE"
+      return relay_ipv4_with_split sockets, packet
+    return nil, sent_or_err
 
-  ok, sent_or_err = pcall raw_ip.send, raw_ip, packet.ip_packet, dst_u32, 0
-  if ok and sent_or_err and sent_or_err > 0
-    return true
-  if (not ok) and "#{sent_or_err}"\find "EMSGSIZE"
-    return relay_ipv4_with_split sockets, packet
-  return nil, sent_or_err
+  if #packet.dst == 16
+    raw_ip6 = sockets._raw_ip6
+    unless raw_ip6
+      ok_raw, raw_or_err = pcall socket.new, af.INET6, sock.RAW, ipproto.UDP
+      return nil, raw_or_err unless ok_raw and raw_or_err
+      raw_ip6 = raw_or_err
+      sockets._raw_ip6 = raw_ip6
+
+    return nil, "short IPv6 packet for relay" unless #packet.ip_packet >= 48
+    udp_pkt = packet.ip_packet\sub 41
+    ok, sent_or_err = send_ipv6_udp raw_ip6, udp_pkt, packet.dst, packet.dpt, packet.ifindex
+    return true if ok
+    if "#{sent_or_err}"\find("EMSGSIZE") or "#{sent_or_err}"\find("EINVAL")
+      return relay_ipv6_with_split sockets, packet
+    return nil, sent_or_err
+
+  nil, "unsupported IP address size #{#packet.dst}"
 
 
 extract_initial_packets = (payload) ->
+  datagrams, err = QUIC.split_datagrams payload, 1
+  return nil, err unless datagrams
   packets = {}
-  off = 1
-  while off <= #payload
-    parsed, q = pcall QUIC.parse, payload, off
-    return nil, "QUIC header parse error at offset #{off}: #{q}" unless parsed and q
-
-    break unless q.long_header
-    return nil, "missing QUIC packet number offset at offset #{off}" unless q.pn_off
-    return nil, "missing QUIC packet length at offset #{off}" unless q.pkt_length
-
-    packet_end = (q.pn_off - 1) + q.pkt_length
-    return nil, "invalid QUIC packet bounds at offset #{off}" unless packet_end >= off and packet_end <= #payload
-
-    if q.pkt_type == 0x00
-      packets[#packets + 1] = payload\sub off, packet_end
-
-    off = packet_end + 1
+  for d in *datagrams
+    packets[#packets + 1] = d.data if d.header and d.header.pkt_type == 0x00
 
   packets
 
